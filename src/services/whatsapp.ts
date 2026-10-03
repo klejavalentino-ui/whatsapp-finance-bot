@@ -104,40 +104,49 @@ function getDigitsFromJid(jid?: string | null): string {
 }
 
 /**
- * Valida si el mensaje entrante pertenece de forma exclusiva al usuario autorizado o a su chat personal.
+ * Valida de forma estricta si el mensaje ocurre dentro del chat personal del usuario autorizado.
+ * NO debe operar ni leer mensajes en chats de terceros, grupos o estados.
  */
 function isAuthorizedSender(msg: proto.IWebMessageInfo, myCreds?: any): boolean {
   const remoteJid = msg.key.remoteJid || '';
 
-  // 1. Ignorar actualizaciones de estado o mensajes grupales
-  if (remoteJid === 'status@broadcast' || remoteJid.endsWith('@g.us')) {
+  // 1. Ignorar de inmediato actualizaciones de estado, listas de difusión o grupos
+  if (
+    !remoteJid ||
+    remoteJid === 'status@broadcast' ||
+    remoteJid.endsWith('@g.us') ||
+    remoteJid.endsWith('@broadcast')
+  ) {
     return false;
   }
 
-  const allowed = config.allowedPhoneNumber;
+  const allowed = config.allowedPhoneNumber; // Ej: 34642448328
+  const userPhone = myCreds?.me?.id ? getDigitsFromJid(myCreds.me.id) : '';
+  const userLid = myCreds?.me?.lid ? getDigitsFromJid(myCreds.me.lid) : '';
+  const fallbackLid = '9870623391753';
+
+  // Conjunto de identificadores válidos exclusivos del usuario
+  const validIdentifiers = new Set<string>();
+  if (allowed) validIdentifiers.add(allowed);
+  if (userPhone) validIdentifiers.add(userPhone);
+  if (userLid) validIdentifiers.add(userLid);
+  validIdentifiers.add(fallbackLid);
+
+  // 2. El chat en sí (remoteJid) DEBE pertenecer estrictamente al propio usuario
   const chatDigits = getDigitsFromJid(remoteJid);
-  const userPhone = myCreds?.me?.id ? getDigitsFromJid(myCreds.me.id) : allowed;
-  const userLidDigits = myCreds?.me?.lid ? getDigitsFromJid(myCreds.me.lid) : '9870623391753';
-
-  // Coincide con número de teléfono
-  if (chatDigits === allowed || (userPhone && chatDigits === userPhone)) {
-    return true;
+  if (!chatDigits || !validIdentifiers.has(chatDigits)) {
+    return false;
   }
 
-  // Coincide con LID de la cuenta personal
-  if (userLidDigits && chatDigits === userLidDigits) {
-    return true;
-  }
-
-  // Si fue enviado por el propio usuario (fromMe)
-  if (msg.key.fromMe) {
-    // Si viene de @lid o coincide con el usuario, es el chat consigo mismo
-    if (remoteJid.endsWith('@lid') || chatDigits === allowed || chatDigits === userPhone || chatDigits === userLidDigits) {
-      return true;
+  // 3. Si hay participante específico (ej. sync multi-dispositivo), también debe ser del usuario
+  if (msg.key.participant) {
+    const partDigits = getDigitsFromJid(msg.key.participant);
+    if (partDigits && !validIdentifiers.has(partDigits)) {
+      return false;
     }
   }
 
-  return false;
+  return true;
 }
 
 /**
@@ -227,11 +236,17 @@ export async function startWhatsAppClient(): Promise<WASocket> {
       if (!msgId || processedMessageIds.has(msgId)) continue;
       rememberMessageId(msgId);
 
-      // 1. Extraer texto del mensaje
+      // 1. Filtro estricto de seguridad: Solo operar en el chat personal del usuario autorizado
+      if (!isAuthorizedSender(msg, state.creds)) {
+        // Descartar de inmediato sin leer ni procesar mensajes de conversaciones con otras personas
+        continue;
+      }
+
+      // 2. Extraer texto del mensaje exclusivamente si es del chat personal
       const text = extractTextMessage(msg.message);
       if (!text) continue;
 
-      // 2. Si el mensaje es una respuesta generada por el bot, ignorar para evitar bucles
+      // 3. Si el mensaje es una respuesta generada por el bot, ignorar para evitar bucles
       if (
         text.startsWith('✅ *Registrado con éxito:*') ||
         text.startsWith('⚠️') ||
@@ -240,15 +255,7 @@ export async function startWhatsAppClient(): Promise<WASocket> {
         continue;
       }
 
-      console.log(`\n[EVENTO MSG] id: ${msgId} | remoteJid: ${msg.key.remoteJid} | fromMe: ${msg.key.fromMe} | texto: "${text}"`);
-
-      // 3. Filtro estricto de seguridad: número autorizado o chat personal
-      if (!isAuthorizedSender(msg, state.creds)) {
-        console.log(`[Seguridad] Mensaje descartado de ${msg.key.remoteJid}: no coincide con el usuario autorizado.`);
-        continue;
-      }
-
-      console.log(`📩 [Mensaje Aceptado] "${text}" en chat ${msg.key.remoteJid}`);
+      console.log(`\n📩 [Mensaje Personal Aceptado] id: ${msgId} | chat: ${msg.key.remoteJid} | texto: "${text}"`);
 
       // Enviar indicador de "escribiendo..." en WhatsApp
       if (msg.key.remoteJid) {

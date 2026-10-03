@@ -1,0 +1,36 @@
+{
+  "name": "whatsapp-finance-bot",
+  "version": "1.0.0",
+  "description": "Personal WhatsApp Chatbot to track expenses & income and sync with Google Sheets using Gemini LLM",
+  "main": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "start": "node ./node_modules/tsx/dist/cli.mjs src/index.ts",
+    "dev": "node ./node_modules/tsx/dist/cli.mjs watch src/index.ts",
+    "test": "node ./node_modules/tsx/dist/cli.mjs tests/test-parser.ts"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "expenses",
+    "finance",
+    "google-sheets",
+    "gemini",
+    "baileys"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@google/genai": "^2.3.0",
+    "@whiskeysockets/baileys": "^6.7.12",
+    "dotenv": "^16.4.7",
+    "googleapis": "^144.0.0",
+    "pino": "^9.6.0",
+    "qrcode-terminal": "^0.12.0",
+    "tsx": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "@types/qrcode-terminal": "^0.12.2"
+  }
+}

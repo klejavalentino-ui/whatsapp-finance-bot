@@ -1,0 +1,14 @@
+services:
+  whatsapp-finance-bot:
+    build: .
+    container_name: whatsapp-finance-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Persistencia de la sesión de WhatsApp (para no tener que escanear el QR cada vez)
+      - ./auth_session:/app/auth_session
+      # Montaje de credenciales de Google Cloud
+      - ./credentials:/app/credentials
+    stdin_open: true # Necesario para renderizar QR adecuadamente
+    tty: true

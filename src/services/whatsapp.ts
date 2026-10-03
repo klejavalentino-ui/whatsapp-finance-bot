@@ -272,9 +272,9 @@ export async function startWhatsAppClient(): Promise<WASocket> {
             '⚠️ *No pude interpretar la transacción.*\n\n' +
             'Por favor asegúrate de incluir el concepto y el monto.\n' +
             'Ejemplos:\n' +
-            '• _Almuerzo 12.50_\n' +
-            '• _Cobro sueldo 1500_\n' +
-            '• _Uber 800 transporte ayer_';
+            '• _Almuerzo 12.50 euros_\n' +
+            '• _Supermercado 50 usd_\n' +
+            '• _Nafta 15000 pesos ayer_';
 
           let sent: any;
           try {
@@ -292,7 +292,7 @@ export async function startWhatsAppClient(): Promise<WASocket> {
         await appendTransaction(tx);
 
         // 6. Responder mensaje de confirmación formateado
-        const formattedAmount = `${config.currencySymbol}${tx.monto.toFixed(2)}`;
+        const formattedAmount = `${tx.monto.toFixed(2)} ${tx.moneda}`;
         const confirmationMessage =
           `✅ *Registrado con éxito:*\n` +
           `• *Tipo:* ${tx.tipo}\n` +

@@ -52,6 +52,15 @@ async function bootstrap() {
   // Iniciar servidor HTTP para Render / Docker health checks
   startHttpServer();
 
+  // Inicializar Google Sheets y pestaña Tablero en el arranque
+  try {
+    const { getSheetsClient, ensureTablero } = await import('./services/sheets.js');
+    const sheets = await getSheetsClient();
+    await ensureTablero(sheets);
+  } catch (err: any) {
+    console.warn('⚠️ Nota: Google Sheets se verificará al recibir el primer movimiento:', err?.message || err);
+  }
+
   try {
     // Iniciar cliente de WhatsApp
     await startWhatsAppClient();

@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { config } from '../config/env.js';
-import { ExtractionResult, Transaction, TransactionType } from '../types/transaction.js';
+import { CurrencyType, ExtractionResult, Transaction, TransactionType } from '../types/transaction.js';
 
 let genAIClient: GoogleGenAI | null = null;
 
@@ -47,19 +47,35 @@ export async function parseTransactionWithGemini(userText: string): Promise<Extr
   }
 
   const systemInstruction = `
-Eres un asistente financiero personal de alta precisión. Tu tarea es extraer de manera estructurada los gastos e ingresos a partir de los mensajes informales que el usuario envía por WhatsApp.
+Eres un asistente financiero personal de alta precisión. Tu tarea es extraer de manera estructurada los gastos, ingresos e inversiones a partir de los mensajes informales que el usuario envía por WhatsApp.
 
 Contexto temporal:
 ${fullContext}
 
+Moneda por defecto: "${config.defaultCurrency || 'EUR'}".
+
 Reglas de extracción:
 1. "esValido": Debe ser true únicamente si el usuario especifica un monto claro y un concepto identificable. Si solo saluda, es ambiguo o falta el monto numérico, devuelve false.
-2. "tipo": Determina si es "Gasto" (lo habitual: compras, comida, pagos, ubers, cuentas) o "Ingreso" (sueldo, cobro, venta, depósito, honorarios, etc.).
+2. "tipo": Clasifica exactamente en una de las siguientes opciones:
+   - "Gasto": Pagos, compras habituales, cuentas, consumos, servicios, etc.
+   - "Ingreso": Sueldo, salarios, cobro por servicios, ventas, transferencias recibidas, etc.
+   - "Inversión": Compra de acciones, bonos, CEDEARs, criptomonedas (BTC, USDT, etc.), plazo fijo, fondos de inversión, etc.
 3. "monto": Número positivo (ej. 12.50, 1500, 800).
-4. "categoria": Clasifica en una categoría estándar y concisa en español (ej. "Comida", "Transporte", "Servicios", "Sueldo", "Ocio", "Salud", "Hogar", "Supermercado", "Educación", "Transferencia", "Otros"). Si el usuario la menciona explícitamente, respétala. Si no, dedúcela del concepto.
-5. "descripcion": Concepto claro y resumido (ej. "Almuerzo", "Uber a casa", "Cobro sueldo mensual").
-6. "fecha": Formato YYYY-MM-DD. Si el mensaje menciona términos relativos como "ayer", "anteayer", o un día de la semana, calcula la fecha exacta en base al contexto temporal provisto. Si no se indica fecha, usa la fecha de hoy: "${isoDate}".
-7. "motivoAclaracion": Si "esValido" es false, escribe un mensaje cordial y corto en español pidiendo los datos necesarios con ejemplos.
+4. "moneda": Detecta la divisa especificada en el mensaje:
+   - "EUR": si menciona "€", "eur", "euro", "euros" o si no se especifica divisa explícita (moneda predeterminada).
+   - "USD": si menciona "$", "usd", "dolar", "dolares", "dólar", "dólares", "u$s", "us$".
+   - "ARS": si menciona "ars", "peso", "pesos", "pesos argentinos".
+5. "categoria": Clasifica estrictamente en una de las siguientes categorías en español:
+   - "Supermercado": Compras de comida y bebidas para casa, despensa, mercado, artículos de limpieza.
+   - "Salidas": Restaurantes, bares, comidas afuera, cafés, delivery, cine, recitales, ocio.
+   - "Viajes": Pasajes de avión, trenes, hoteles, alojamiento, turismo, vacaciones.
+   - "Fijos": Alquiler, expensas, luz, agua, gas, internet, telefonía, suscripciones (Netflix, Spotify, etc.), seguros.
+   - "Movilidad": Transporte diario (uber, cabify, taxi, colectivo, metro, tren), combustible/gasolina/nafta, peajes, estacionamiento.
+   - "Articulo": Compras de bienes materiales, ropa, calzado, tecnología, muebles, farmacia/medicamentos, Amazon/tiendas.
+   - "Otros": Únicamente si no encaja en las anteriores (ej. Inversiones o Ingresos generales).
+6. "descripcion": Concepto claro y resumido (ej. "Almuerzo", "Uber a casa", "Compra zapatillas", "Cobro sueldo mensual").
+7. "fecha": Formato YYYY-MM-DD. Si el mensaje menciona términos relativos como "ayer", "anteayer", o un día de la semana, calcula la fecha exacta en base al contexto temporal provisto. Si no se indica fecha, usa la fecha de hoy: "${isoDate}".
+8. "motivoAclaracion": Si "esValido" es false, escribe un mensaje cordial y corto en español pidiendo los datos necesarios con ejemplos.
 `.trim();
 
   try {
@@ -78,16 +94,22 @@ Reglas de extracción:
             },
             tipo: {
               type: Type.STRING,
-              enum: ['Gasto', 'Ingreso'],
-              description: 'Gasto o Ingreso.',
+              enum: ['Gasto', 'Ingreso', 'Inversión'],
+              description: 'Tipo de transacción: Gasto, Ingreso o Inversión.',
             },
             monto: {
               type: Type.NUMBER,
-              description: 'Valor numérico de la transacción.',
+              description: 'Valor numérico positivo de la transacción.',
+            },
+            moneda: {
+              type: Type.STRING,
+              enum: ['EUR', 'USD', 'ARS'],
+              description: 'Moneda de la transacción: EUR, USD o ARS.',
             },
             categoria: {
               type: Type.STRING,
-              description: 'Categoría deducida o explícita.',
+              enum: ['Supermercado', 'Salidas', 'Viajes', 'Fijos', 'Movilidad', 'Articulo', 'Otros'],
+              description: 'Categoría clasificada.',
             },
             descripcion: {
               type: Type.STRING,
@@ -115,16 +137,25 @@ Reglas de extracción:
         esValido: false,
         mensajeAclaracion:
           parsed.motivoAclaracion ||
-          'No pude identificar el monto o el concepto de tu mensaje.\nPor favor indica el detalle y monto (ej: *Almuerzo 12.50* o *Cobro sueldo 1500*).',
+          'No pude identificar el monto o el concepto de tu mensaje.\nPor favor indica el detalle y monto (ej: *Almuerzo 12.50 euros*, *Supermercado 50 usd* o *Nafta 15000 pesos*).',
       };
     }
 
+    const validMoneda: CurrencyType = ['EUR', 'USD', 'ARS'].includes(parsed.moneda)
+      ? (parsed.moneda as CurrencyType)
+      : (config.defaultCurrency || 'EUR');
+
+    const validTipo: TransactionType = ['Gasto', 'Ingreso', 'Inversión'].includes(parsed.tipo)
+      ? (parsed.tipo as TransactionType)
+      : 'Gasto';
+
     const transaction: Transaction = {
       fecha: parsed.fecha || isoDate,
-      tipo: parsed.tipo === 'Ingreso' ? 'Ingreso' : 'Gasto',
+      tipo: validTipo,
       categoria: parsed.categoria || 'Otros',
       descripcion: parsed.descripcion,
       monto: Math.abs(Number(parsed.monto)),
+      moneda: validMoneda,
     };
 
     return {
@@ -143,56 +174,81 @@ Reglas de extracción:
  */
 export function parseTransactionFallback(text: string, defaultDate: string): ExtractionResult {
   const clean = text.trim();
-  
-  // Buscar montos: $12.50, 12,50, 1500, etc.
-  const amountMatch = clean.match(/(?:[$€£]\s*)?(\d+(?:[.,]\d{1,2})?)(?:\s*[$€£])?/);
+
+  // 1. Detectar divisa: "EUR" | "USD" | "ARS" (por defecto EUR)
+  let moneda: CurrencyType = config.defaultCurrency || 'EUR';
+  if (/\b(ars|pesos?|pesos?\s*arg(?:entinos?)?)\b/i.test(clean)) {
+    moneda = 'ARS';
+  } else if (/\b(usd|d[oó]lar(?:es)?|u\$s|us\$)\b/i.test(clean)) {
+    moneda = 'USD';
+  } else if (/\b(eur|euros?|€)\b/i.test(clean)) {
+    moneda = 'EUR';
+  } else if (clean.includes('$')) {
+    moneda = 'USD';
+  }
+
+  // 2. Extraer monto numérico (ej: 12.50, 12,50, 1500)
+  const amountMatch = clean.match(/(?:[$€£]\s*)?(\d+(?:[.,]\d{1,2})?)(?:\s*(?:[$€£]|eur(?:os?)?|usd|d[oó]lar(?:es)?|ars|pesos?|u\$s|us\$))?/i);
   if (!amountMatch) {
     return {
       esValido: false,
       mensajeAclaracion:
         '⚠️ No encontré ningún monto numérico en tu mensaje.\n' +
         'Por favor envía algo como:\n' +
-        '👉 *Almuerzo 12.50*\n' +
-        '👉 *Cobro sueldo 1500*\n' +
-        '👉 *Uber 800 transporte ayer*',
+        '👉 *Almuerzo 12.50 euros*\n' +
+        '👉 *Supermercado 50 usd*\n' +
+        '👉 *Nafta 15000 pesos*',
     };
   }
 
   const rawAmount = amountMatch[1].replace(',', '.');
   const monto = parseFloat(rawAmount);
 
-  // Quitar el número del texto para obtener la descripción
-  const description = clean.replace(amountMatch[0], '').replace(/\s+/g, ' ').trim();
+  // 3. Extraer descripción limpiando monto y términos de divisa
+  let description = clean
+    .replace(amountMatch[0], '')
+    .replace(/\b(eur|euros?|€|usd|d[oó]lar(?:es)?|u\$s|us\$|ars|pesos?|\$)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
   if (description.length < 2) {
     return {
       esValido: false,
-      mensajeAclaracion: '⚠️ El mensaje contiene un monto pero falta el concepto o descripción (ej: *Cena 25*).',
+      mensajeAclaracion: '⚠️ El mensaje contiene un monto pero falta el concepto o descripción (ej: *Cena 25 euros*).',
     };
   }
 
-  const lower = description.toLowerCase();
-  
-  // Deducir Tipo
-  const isIncome = /\b(sueldo|ingreso|cobro|cobre|honorarios|deposito|venta|pago recibido)\b/i.test(lower);
-  const tipo: TransactionType = isIncome ? 'Ingreso' : 'Gasto';
+  const lower = clean.toLowerCase();
 
-  // Deducir Categoría
-  let categoria = 'Otros';
-  if (isIncome) {
-    categoria = 'Sueldo/Ingresos';
-  } else if (/\b(almuerzo|cena|desayuno|comida|restaurante|cafe|super|supermercado|burger|pizza)\b/i.test(lower)) {
-    categoria = 'Comida';
-  } else if (/\b(uber|taxi|cabify|metro|bus|colectivo|gasolina|nafta|peaje|transporte)\b/i.test(lower)) {
-    categoria = 'Transporte';
-  } else if (/\b(luz|agua|gas|internet|wifi|netflix|spotify|telefono|alquiler|expensas|servicios)\b/i.test(lower)) {
-    categoria = 'Servicios';
-  } else if (/\b(cine|salida|bar|cerveza|juego|fiesta|concierto)\b/i.test(lower)) {
-    categoria = 'Ocio';
-  } else if (/\b(farmacia|medico|doctor|remedio|salud|dentista)\b/i.test(lower)) {
-    categoria = 'Salud';
+  // 4. Deducir Tipo: 'Gasto' | 'Ingreso' | 'Inversión'
+  let tipo: TransactionType = 'Gasto';
+  if (/\b(inversi[oó]n|invert[ií]|acciones|cedears?|cripto|bitcoin|btc|usdt|plazo fijo|bonos?|fci)\b/i.test(lower)) {
+    tipo = 'Inversión';
+  } else if (/\b(sueldo|salario|ingreso|cobro|cobr[eé]|honorarios|dep[oó]sito|venta|pago recibido)\b/i.test(lower)) {
+    tipo = 'Ingreso';
   }
 
-  // Deducir Fecha
+  // 5. Deducir Categoría: Supermercado, Salidas, Viajes, Fijos, Movilidad, Articulo, Otros
+  let categoria = 'Otros';
+  if (tipo === 'Inversión') {
+    categoria = 'Inversión';
+  } else if (tipo === 'Ingreso') {
+    categoria = 'Ingresos';
+  } else if (/\b(super|supermercado|mercadona|carrefour|dia|coto|despensa|almacen|verduleria|carniceria|compras casa)\b/i.test(lower)) {
+    categoria = 'Supermercado';
+  } else if (/\b(cena|almuerzo|desayuno|comida|restaurante|cafe|cafeteria|bar|cerveza|trago|delivery|pedidosya|glovo|mcdonalds|burger|pizza|salida|cine|recital|boliche|fiesta|merienda)\b/i.test(lower)) {
+    categoria = 'Salidas';
+  } else if (/\b(viaje|vuelo|avion|hotel|airbnb|hospedaje|pasaje|turismo|vacaciones|equipaje|alojamiento)\b/i.test(lower)) {
+    categoria = 'Viajes';
+  } else if (/\b(alquiler|expensas|luz|agua|gas|internet|wifi|netflix|spotify|telefono|seguro|cuota|suscripci[oó]n|patente)\b/i.test(lower)) {
+    categoria = 'Fijos';
+  } else if (/\b(uber|cabify|taxi|metro|subte|bus|colectivo|tren|nafta|gasolina|combustible|peaje|estacionamiento|cochera|movilidad)\b/i.test(lower)) {
+    categoria = 'Movilidad';
+  } else if (/\b(ropa|zapatillas|calzado|remera|pantalon|tecnologia|celular|computadora|farmacia|remedio|medicamento|libro|compra|amazon|articulo)\b/i.test(lower)) {
+    categoria = 'Articulo';
+  }
+
+  // 6. Deducir Fecha
   let fecha = defaultDate;
   if (/\bayer\b/i.test(lower)) {
     const yesterday = new Date();
@@ -208,6 +264,7 @@ export function parseTransactionFallback(text: string, defaultDate: string): Ext
       categoria,
       descripcion: description.charAt(0).toUpperCase() + description.slice(1),
       monto,
+      moneda,
     },
   };
 }

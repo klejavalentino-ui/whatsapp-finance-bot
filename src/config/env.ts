@@ -1,6 +1,8 @@
 import dotenv from 'dotenv';
 import path from 'path';
 
+import { CurrencyType } from '../types/transaction.js';
+
 // Cargar variables de entorno desde .env
 dotenv.config();
 
@@ -14,6 +16,7 @@ export interface Config {
   googleServiceAccountJson?: string;
   whatsappAuthDir: string;
   currencySymbol: string;
+  defaultCurrency: CurrencyType;
 }
 
 function getEnv(key: string, defaultValue?: string): string {
@@ -39,7 +42,8 @@ export const config: Config = {
     process.cwd(),
     process.env.WHATSAPP_AUTH_DIR || './auth_session'
   ),
-  currencySymbol: process.env.CURRENCY_SYMBOL || '$',
+  currencySymbol: process.env.CURRENCY_SYMBOL || '€',
+  defaultCurrency: ((process.env.DEFAULT_CURRENCY || 'EUR').toUpperCase() as CurrencyType) || 'EUR',
 };
 
 export function validateCoreConfig(): void {

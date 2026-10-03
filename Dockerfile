@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Instalar dependencias
 COPY package*.json tsconfig.json ./
-RUN npm ci --omit=dev
+RUN npm install --omit=dev
 
 # Copiar código fuente
 COPY src ./src

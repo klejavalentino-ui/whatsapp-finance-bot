@@ -105,18 +105,49 @@ function getDigitsFromJid(jid?: string | null): string {
 
 /**
  * Valida de forma estricta si el mensaje ocurre dentro del chat personal del usuario autorizado.
- * NO debe operar ni leer mensajes en chats de terceros, grupos o estados.
+ * NO debe operar ni leer mensajes en chats de terceros, grupos, estados o interacciones con Meta AI.
  */
 function isAuthorizedSender(msg: proto.IWebMessageInfo, myCreds?: any): boolean {
   const remoteJid = msg.key.remoteJid || '';
 
-  // 1. Ignorar de inmediato actualizaciones de estado, listas de difusión o grupos
+  // 1. Ignorar de inmediato actualizaciones de estado, listas de difusión, grupos o chats de Meta AI
   if (
     !remoteJid ||
     remoteJid === 'status@broadcast' ||
     remoteJid.endsWith('@g.us') ||
-    remoteJid.endsWith('@broadcast')
+    remoteJid.endsWith('@broadcast') ||
+    remoteJid.includes('bot') ||
+    remoteJid.endsWith('@bot') ||
+    remoteJid === '0@s.whatsapp.net' ||
+    remoteJid.includes('1313555')
   ) {
+    return false;
+  }
+
+  // 2. Ignorar cualquier mensaje que invoque o mencione bots de Meta AI
+  const rawMsg = msg.message as any;
+  if (
+    rawMsg?.botInvokeMessage ||
+    rawMsg?.messageContextInfo?.botMessageInfo ||
+    rawMsg?.extendedTextMessage?.contextInfo?.invokedBotWid ||
+    (msg as any).invokedBotWid ||
+    (msg as any).botPluginMetadata
+  ) {
+    return false;
+  }
+
+  const mentionedJid = rawMsg?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+  if (
+    mentionedJid.some(
+      (j: string) => j.includes('bot') || j.includes('1313555') || j === '0@s.whatsapp.net'
+    )
+  ) {
+    return false;
+  }
+
+  // 3. En el chat personal (bloc de notas / chat con uno mismo), el mensaje debe provenir del usuario (fromMe)
+  // Las respuestas de Meta AI u otros servicios dentro de este chat tienen fromMe = false
+  if (!msg.key.fromMe) {
     return false;
   }
 
@@ -132,13 +163,13 @@ function isAuthorizedSender(msg: proto.IWebMessageInfo, myCreds?: any): boolean 
   if (userLid) validIdentifiers.add(userLid);
   validIdentifiers.add(fallbackLid);
 
-  // 2. El chat en sí (remoteJid) DEBE pertenecer estrictamente al propio usuario
+  // 4. El chat en sí (remoteJid) DEBE pertenecer estrictamente al propio usuario
   const chatDigits = getDigitsFromJid(remoteJid);
   if (!chatDigits || !validIdentifiers.has(chatDigits)) {
     return false;
   }
 
-  // 3. Si hay participante específico (ej. sync multi-dispositivo), también debe ser del usuario
+  // 5. Si hay participante específico (ej. sync multi-dispositivo), también debe ser del usuario
   if (msg.key.participant) {
     const partDigits = getDigitsFromJid(msg.key.participant);
     if (partDigits && !validIdentifiers.has(partDigits)) {
@@ -246,7 +277,17 @@ export async function startWhatsAppClient(): Promise<WASocket> {
       const text = extractTextMessage(msg.message);
       if (!text) continue;
 
-      // 3. Si el mensaje es una respuesta generada por el bot, ignorar para evitar bucles
+      // 3. Ignorar interacciones o menciones a Meta AI
+      const lowerText = text.toLowerCase();
+      if (
+        lowerText.includes('@meta') ||
+        lowerText.includes('meta ai') ||
+        lowerText.startsWith('@')
+      ) {
+        continue;
+      }
+
+      // 4. Si el mensaje es una respuesta generada por el bot, ignorar para evitar bucles
       if (
         text.startsWith('✅ *Registrado con éxito:*') ||
         text.startsWith('⚠️') ||

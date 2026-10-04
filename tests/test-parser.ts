@@ -12,6 +12,7 @@ const testCases = [
   'Alquiler 400 u$s',
   'Compra zapatillas 85€',
   'Inversión 500 usd en cripto',
+  'Inversión 100000 pesos en IOL',
   'Cobro sueldo 2500 eur',
   'Café 1.50',
   'Uber 2500 ars ayer',

@@ -56,24 +56,25 @@ Moneda por defecto: "${config.defaultCurrency || 'EUR'}".
 
 Reglas de extracción:
 1. "esValido": Debe ser true únicamente si el usuario especifica un monto claro y un concepto identificable. Si solo saluda, es ambiguo o falta el monto numérico, devuelve false.
-2. "tipo": Clasifica exactamente en una de las siguientes opciones:
-   - "Gasto": Pagos, compras habituales, cuentas, consumos, servicios, etc.
+2. "tipo": Clasifica estrictamente en una de las siguientes 3 opciones:
+   - "Gasto": Pagos, compras habituales, cuentas, consumos, servicios, salidas, etc.
    - "Ingreso": Sueldo, salarios, cobro por servicios, ventas, transferencias recibidas, etc.
-   - "Inversión": Compra de acciones, bonos, CEDEARs, criptomonedas (BTC, USDT, etc.), plazo fijo, fondos de inversión, etc.
+   - "Inversión": Dinero destinado a inversión, brokers (ej: IOL, InvertirOnline, Balanz, Bull Market, Binance, etc.), compra de acciones, bonos, CEDEARs, criptomonedas (BTC, USDT, etc.), plazo fijo, fondos comunes de inversión (FCI), etc. NUNCA clasificar una inversión como "Gasto".
 3. "monto": Número positivo (ej. 12.50, 1500, 800).
 4. "moneda": Detecta la divisa especificada en el mensaje:
    - "EUR": si menciona "€", "eur", "euro", "euros" o si no se especifica divisa explícita (moneda predeterminada).
    - "USD": si menciona "$", "usd", "dolar", "dolares", "dólar", "dólares", "u$s", "us$".
    - "ARS": si menciona "ars", "peso", "pesos", "pesos argentinos".
 5. "categoria": Clasifica estrictamente en una de las siguientes categorías en español:
+   - "Inversión": Para cualquier tipo de inversión financiera, brokers, acciones, cripto, etc.
    - "Supermercado": Compras de comida y bebidas para casa, despensa, mercado, artículos de limpieza.
    - "Salidas": Restaurantes, bares, comidas afuera, cafés, delivery, cine, recitales, ocio.
    - "Viajes": Pasajes de avión, trenes, hoteles, alojamiento, turismo, vacaciones.
    - "Fijos": Alquiler, expensas, luz, agua, gas, internet, telefonía, suscripciones (Netflix, Spotify, etc.), seguros.
    - "Movilidad": Transporte diario (uber, cabify, taxi, colectivo, metro, tren), combustible/gasolina/nafta, peajes, estacionamiento.
    - "Articulo": Compras de bienes materiales, ropa, calzado, tecnología, muebles, farmacia/medicamentos, Amazon/tiendas.
-   - "Otros": Únicamente si no encaja en las anteriores (ej. Inversiones o Ingresos generales).
-6. "descripcion": Concepto claro y resumido (ej. "Almuerzo", "Uber a casa", "Compra zapatillas", "Cobro sueldo mensual").
+   - "Otros": Únicamente si no encaja en las anteriores (ej. Ingresos generales).
+6. "descripcion": Concepto claro y resumido (ej. "Almuerzo", "Uber a casa", "Compra zapatillas", "Inversión en IOL", "Cobro sueldo mensual").
 7. "fecha": Formato YYYY-MM-DD. Si el mensaje menciona términos relativos como "ayer", "anteayer", o un día de la semana, calcula la fecha exacta en base al contexto temporal provisto. Si no se indica fecha, usa la fecha de hoy: "${isoDate}".
 8. "motivoAclaracion": Si "esValido" es false, escribe un mensaje cordial y corto en español pidiendo los datos necesarios con ejemplos.
 `.trim();
@@ -108,7 +109,7 @@ Reglas de extracción:
             },
             categoria: {
               type: Type.STRING,
-              enum: ['Supermercado', 'Salidas', 'Viajes', 'Fijos', 'Movilidad', 'Articulo', 'Otros'],
+              enum: ['Inversión', 'Supermercado', 'Salidas', 'Viajes', 'Fijos', 'Movilidad', 'Articulo', 'Otros'],
               description: 'Categoría clasificada.',
             },
             descripcion: {

@@ -261,6 +261,31 @@ async function applyTableFormatting(sheets: sheets_v4.Sheets, sheetId: number, s
       },
     });
 
+    // Añadir regla de validación de datos (desplegable) a la columna Tipo (Col B)
+    requests.push({
+      setDataValidation: {
+        range: {
+          sheetId,
+          startRowIndex: 1, // Desde fila 2 (0-indexed)
+          endRowIndex: 1000,
+          startColumnIndex: 1, // Columna B
+          endColumnIndex: 2,
+        },
+        rule: {
+          condition: {
+            type: 'ONE_OF_LIST',
+            values: [
+              { userEnteredValue: 'Gasto' },
+              { userEnteredValue: 'Ingreso' },
+              { userEnteredValue: 'Inversión' },
+            ],
+          },
+          showCustomUi: true,
+          strict: true,
+        },
+      },
+    });
+
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId: config.spreadsheetId,
       requestBody: { requests },

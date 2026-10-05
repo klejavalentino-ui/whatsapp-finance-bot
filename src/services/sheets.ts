@@ -181,13 +181,27 @@ async function applyTableFormatting(sheets: sheets_v4.Sheets, sheetId: number, s
       },
     });
 
-    // Formato de moneda para Col E (EUR)
+    // Formato de fecha para Col A (yyyy-mm-dd)
     requests.push({
       repeatCell: {
-        range: { sheetId, startRowIndex: 1, startColumnIndex: 4, endColumnIndex: 5 },
+        range: { sheetId, startRowIndex: 1, endRowIndex: 2000, startColumnIndex: 0, endColumnIndex: 1 },
         cell: {
           userEnteredFormat: {
-            numberFormat: { type: 'CURRENCY', pattern: '[$€]#,##0.00' },
+            numberFormat: { type: 'DATE', pattern: 'yyyy-mm-dd' },
+            horizontalAlignment: 'CENTER',
+          },
+        },
+        fields: 'userEnteredFormat(numberFormat,horizontalAlignment)',
+      },
+    });
+
+    // Formato de moneda para Col E (EUR) con separador de miles
+    requests.push({
+      repeatCell: {
+        range: { sheetId, startRowIndex: 1, endRowIndex: 2000, startColumnIndex: 4, endColumnIndex: 5 },
+        cell: {
+          userEnteredFormat: {
+            numberFormat: { type: 'CURRENCY', pattern: '[$€] #,##0.00' },
             horizontalAlignment: 'RIGHT',
           },
         },
@@ -195,10 +209,10 @@ async function applyTableFormatting(sheets: sheets_v4.Sheets, sheetId: number, s
       },
     });
 
-    // Formato de moneda para Col F (USD)
+    // Formato de moneda para Col F (USD) con separador de miles
     requests.push({
       repeatCell: {
-        range: { sheetId, startRowIndex: 1, startColumnIndex: 5, endColumnIndex: 6 },
+        range: { sheetId, startRowIndex: 1, endRowIndex: 2000, startColumnIndex: 5, endColumnIndex: 6 },
         cell: {
           userEnteredFormat: {
             numberFormat: { type: 'CURRENCY', pattern: '[$US$ ]#,##0.00' },
@@ -209,10 +223,10 @@ async function applyTableFormatting(sheets: sheets_v4.Sheets, sheetId: number, s
       },
     });
 
-    // Formato de moneda para Col G (ARS)
+    // Formato de moneda para Col G (ARS) con separador de miles
     requests.push({
       repeatCell: {
-        range: { sheetId, startRowIndex: 1, startColumnIndex: 6, endColumnIndex: 7 },
+        range: { sheetId, startRowIndex: 1, endRowIndex: 2000, startColumnIndex: 6, endColumnIndex: 7 },
         cell: {
           userEnteredFormat: {
             numberFormat: { type: 'CURRENCY', pattern: '[$ARS ]#,##0.00' },
@@ -622,6 +636,73 @@ export async function appendTransaction(tx: Transaction): Promise<void> {
       values: [rowValues],
     },
   });
+
+  // Formatear inmediatamente la fila recién insertada con fecha, divisas y alineación
+  try {
+    const { sheetId } = await resolveSheetDetails(sheets);
+    const rowIdx = nextRow - 1; // 0-indexed
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: config.spreadsheetId,
+      requestBody: {
+        requests: [
+          // Celda A: Fecha con formato yyyy-mm-dd y centrada
+          {
+            repeatCell: {
+              range: { sheetId, startRowIndex: rowIdx, endRowIndex: rowIdx + 1, startColumnIndex: 0, endColumnIndex: 1 },
+              cell: {
+                userEnteredFormat: {
+                  numberFormat: { type: 'DATE', pattern: 'yyyy-mm-dd' },
+                  horizontalAlignment: 'CENTER',
+                },
+              },
+              fields: 'userEnteredFormat(numberFormat,horizontalAlignment)',
+            },
+          },
+          // Celda E: Monto EUR (€) con separador de miles
+          {
+            repeatCell: {
+              range: { sheetId, startRowIndex: rowIdx, endRowIndex: rowIdx + 1, startColumnIndex: 4, endColumnIndex: 5 },
+              cell: {
+                userEnteredFormat: {
+                  numberFormat: { type: 'CURRENCY', pattern: '[$€] #,##0.00' },
+                  horizontalAlignment: 'RIGHT',
+                },
+              },
+              fields: 'userEnteredFormat(numberFormat,horizontalAlignment)',
+            },
+          },
+          // Celda F: Monto USD (US$) con separador de miles
+          {
+            repeatCell: {
+              range: { sheetId, startRowIndex: rowIdx, endRowIndex: rowIdx + 1, startColumnIndex: 5, endColumnIndex: 6 },
+              cell: {
+                userEnteredFormat: {
+                  numberFormat: { type: 'CURRENCY', pattern: '[$US$ ]#,##0.00' },
+                  horizontalAlignment: 'RIGHT',
+                },
+              },
+              fields: 'userEnteredFormat(numberFormat,horizontalAlignment)',
+            },
+          },
+          // Celda G: Monto ARS (ARS) con separador de miles
+          {
+            repeatCell: {
+              range: { sheetId, startRowIndex: rowIdx, endRowIndex: rowIdx + 1, startColumnIndex: 6, endColumnIndex: 7 },
+              cell: {
+                userEnteredFormat: {
+                  numberFormat: { type: 'CURRENCY', pattern: '[$ARS ]#,##0.00' },
+                  horizontalAlignment: 'RIGHT',
+                },
+              },
+              fields: 'userEnteredFormat(numberFormat,horizontalAlignment)',
+            },
+          },
+        ],
+      },
+    });
+  } catch (err: any) {
+    console.error('Error al formatear fila agregada:', err?.message || err);
+  }
 
   console.log(
     `[Google Sheets] ✅ Fila ${nextRow} agregada: ${tx.fecha} | ${tx.tipo} | ${tx.categoria} | ${tx.descripcion} | ${tx.monto} ${tx.moneda}`

@@ -218,6 +218,7 @@ export async function startWhatsAppClient(): Promise<WASocket> {
     printQRInTerminal: false,
     generateHighQualityLinkPreview: false,
     syncFullHistory: false,
+    markOnlineOnConnect: false, // Evita marcar al usuario como "En línea" al conectar el bot
     browser: ['Expense Bot', 'Chrome', '1.0.0'],
   });
 
@@ -225,7 +226,7 @@ export async function startWhatsAppClient(): Promise<WASocket> {
   sock.ev.on('creds.update', saveCreds);
 
   // Manejo del ciclo de vida de la conexión y renderizado del código QR
-  sock.ev.on('connection.update', (update) => {
+  sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
@@ -256,7 +257,13 @@ export async function startWhatsAppClient(): Promise<WASocket> {
     } else if (connection === 'open') {
       console.log('\n🚀 [WhatsApp] ¡Conexión establecida exitosamente!');
       console.log(`✅ Bot listo para recibir gastos e ingresos personales.`);
-      console.log(`🔒 Modo seguro activo: Solo se responderá al número +${config.allowedPhoneNumber}\n`);
+      console.log(`🔒 Modo seguro activo: Solo se responderá al número +${config.allowedPhoneNumber}`);
+      console.log(`🔕 Modo sigiloso activo: Cuenta no marcada como "En línea"\n`);
+
+      // Asegurar presencia como desconectado / invisible
+      try {
+        await sock.sendPresenceUpdate('unavailable');
+      } catch {}
     }
   });
 
@@ -298,10 +305,6 @@ export async function startWhatsAppClient(): Promise<WASocket> {
 
       console.log(`\n📩 [Mensaje Personal Aceptado] id: ${msgId} | chat: ${msg.key.remoteJid} | texto: "${text}"`);
 
-      // Enviar indicador de "escribiendo..." en WhatsApp
-      if (msg.key.remoteJid) {
-        await sock.sendPresenceUpdate('composing', msg.key.remoteJid);
-      }
 
       try {
         // 4. Procesar mediante IA (Gemini Flash con Structured Output)
@@ -356,9 +359,9 @@ export async function startWhatsAppClient(): Promise<WASocket> {
         const sent = await sock.sendMessage(msg.key.remoteJid!, { text: errorReply }, { quoted: msg });
         if (sent?.key?.id) rememberMessageId(sent.key.id);
       } finally {
-        if (msg.key.remoteJid) {
-          await sock.sendPresenceUpdate('paused', msg.key.remoteJid);
-        }
+        try {
+          await sock.sendPresenceUpdate('unavailable');
+        } catch {}
       }
     }
   });

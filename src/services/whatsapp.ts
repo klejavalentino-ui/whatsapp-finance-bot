@@ -4,6 +4,10 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   proto,
   WASocket,
+  jidDecode,
+  isJidBot,
+  isJidMetaIa,
+  META_AI_JID,
 } from '@whiskeysockets/baileys';
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
@@ -100,7 +104,9 @@ function extractTextMessage(message: proto.IMessage | null | undefined): string 
  */
 function getDigitsFromJid(jid?: string | null): string {
   if (!jid) return '';
-  return jid.split('@')[0].replace(/\D/g, '');
+  const decoded = jidDecode(jid);
+  const user = decoded?.user || jid.split('@')[0].split(':')[0];
+  return user.replace(/\D/g, '');
 }
 
 /**
@@ -109,75 +115,162 @@ function getDigitsFromJid(jid?: string | null): string {
  */
 function isAuthorizedSender(msg: proto.IWebMessageInfo, myCreds?: any): boolean {
   const remoteJid = msg.key.remoteJid || '';
+  const participant = msg.key.participant || (msg as any).participant || '';
 
-  // 1. Ignorar de inmediato actualizaciones de estado, listas de difusión, grupos o chats de Meta AI
+  // 1. Ignorar de inmediato si remoteJid está vacío, es difusión, grupo o newsletter
   if (
     !remoteJid ||
     remoteJid === 'status@broadcast' ||
-    remoteJid.endsWith('@g.us') ||
     remoteJid.endsWith('@broadcast') ||
-    remoteJid.includes('bot') ||
-    remoteJid.endsWith('@bot') ||
-    remoteJid === '0@s.whatsapp.net' ||
-    remoteJid.includes('1313555')
+    remoteJid.endsWith('@g.us') ||
+    remoteJid.endsWith('@newsletter')
   ) {
     return false;
   }
 
-  // 2. Ignorar cualquier mensaje que invoque o mencione bots de Meta AI
+  // 2. Descartar cualquier identificador asociado a Meta AI o bots en remoteJid
+  if (
+    isJidBot(remoteJid) ||
+    isJidMetaIa(remoteJid) ||
+    remoteJid === META_AI_JID ||
+    remoteJid.endsWith('@bot') ||
+    remoteJid.includes('bot') ||
+    remoteJid === '0@s.whatsapp.net' ||
+    remoteJid === '0@c.us' ||
+    remoteJid.includes('1313555') ||
+    remoteJid.includes('1316555')
+  ) {
+    return false;
+  }
+
+  // 3. Descartar si el participante es un bot o Meta AI
+  if (
+    participant &&
+    (isJidBot(participant) ||
+      isJidMetaIa(participant) ||
+      participant === META_AI_JID ||
+      participant.endsWith('@bot') ||
+      participant.includes('bot') ||
+      participant.includes('1313555') ||
+      participant.includes('1316555') ||
+      participant === '0@s.whatsapp.net' ||
+      participant === '0@c.us')
+  ) {
+    return false;
+  }
+
+  // 4. Descartar cualquier mensaje que tenga atributos de bot o IA a nivel de WebMessageInfo
+  const msgAny = msg as any;
+  if (
+    msgAny.is1PBizBotMessage ||
+    msgAny.isSupportAiMessage ||
+    msgAny.botMessageInvokerJid ||
+    msgAny.botTargetId ||
+    msgAny.invokedBotWid ||
+    msgAny.botPluginMetadata ||
+    msgAny.bizPrivacyStatus
+  ) {
+    return false;
+  }
+
+  // 5. Descartar cualquier mensaje que contenga estructuras de invocación de bot o IA
   const rawMsg = msg.message as any;
   if (
-    rawMsg?.botInvokeMessage ||
-    rawMsg?.messageContextInfo?.botMessageInfo ||
-    rawMsg?.extendedTextMessage?.contextInfo?.invokedBotWid ||
-    (msg as any).invokedBotWid ||
-    (msg as any).botPluginMetadata
+    !rawMsg ||
+    rawMsg.botInvokeMessage ||
+    rawMsg.richResponseMessage ||
+    rawMsg.botTaskMessage ||
+    rawMsg.questionMessage ||
+    rawMsg.botMetadata ||
+    rawMsg.botPluginMetadata ||
+    rawMsg.botSessionMetadata ||
+    rawMsg.botMetricsMetadata ||
+    rawMsg.botAgeCollectionMetadata ||
+    rawMsg.messageContextInfo?.botMessageInfo ||
+    rawMsg.messageContextInfo?.botMetadata
   ) {
     return false;
   }
 
-  const mentionedJid = rawMsg?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+  // 6. Revisar contextInfo de mensajes
+  const contextInfo =
+    rawMsg.extendedTextMessage?.contextInfo ||
+    rawMsg.imageMessage?.contextInfo ||
+    rawMsg.videoMessage?.contextInfo ||
+    rawMsg.documentMessage?.contextInfo;
+
+  if (
+    contextInfo?.invokedBotWid ||
+    contextInfo?.forwardedAiBotMessageInfo ||
+    contextInfo?.botMessageInfo ||
+    contextInfo?.botMetadata
+  ) {
+    return false;
+  }
+
+  const mentionedJid = contextInfo?.mentionedJid || [];
   if (
     mentionedJid.some(
-      (j: string) => j.includes('bot') || j.includes('1313555') || j === '0@s.whatsapp.net'
+      (j: string) =>
+        isJidBot(j) ||
+        isJidMetaIa(j) ||
+        j === META_AI_JID ||
+        j.includes('bot') ||
+        j.includes('1313555') ||
+        j.includes('1316555') ||
+        j === '0@s.whatsapp.net' ||
+        j === '0@c.us'
     )
   ) {
     return false;
   }
 
-  // 3. En el chat personal (bloc de notas / chat con uno mismo), el mensaje debe provenir del usuario (fromMe)
-  // Las respuestas de Meta AI u otros servicios dentro de este chat tienen fromMe = false
+  // 7. En el chat personal (bloc de notas / chat con uno mismo), el mensaje debe provenir del usuario (fromMe)
   if (!msg.key.fromMe) {
     return false;
   }
 
+  // 8. El chat en sí (remoteJid) DEBE pertenecer estrictamente al propio usuario
   const allowed = config.allowedPhoneNumber; // Ej: 34642448328
   const userPhone = myCreds?.me?.id ? getDigitsFromJid(myCreds.me.id) : '';
   const userLid = myCreds?.me?.lid ? getDigitsFromJid(myCreds.me.lid) : '';
   const fallbackLid = '9870623391753';
 
-  // Conjunto de identificadores válidos exclusivos del usuario
   const validIdentifiers = new Set<string>();
   if (allowed) validIdentifiers.add(allowed);
   if (userPhone) validIdentifiers.add(userPhone);
   if (userLid) validIdentifiers.add(userLid);
   validIdentifiers.add(fallbackLid);
 
-  // 4. El chat en sí (remoteJid) DEBE pertenecer estrictamente al propio usuario
   const chatDigits = getDigitsFromJid(remoteJid);
   if (!chatDigits || !validIdentifiers.has(chatDigits)) {
     return false;
   }
 
-  // 5. Si hay participante específico (ej. sync multi-dispositivo), también debe ser del usuario
-  if (msg.key.participant) {
-    const partDigits = getDigitsFromJid(msg.key.participant);
+  if (participant) {
+    const partDigits = getDigitsFromJid(participant);
     if (partDigits && !validIdentifiers.has(partDigits)) {
       return false;
     }
   }
 
   return true;
+}
+
+/**
+ * Determina si el texto tiene apariencia o intención real de registro financiero
+ * (divisas, términos de gastos/ingresos/inversiones o formato concepto + monto).
+ */
+function looksLikeFinancialAttempt(text: string): boolean {
+  const lower = text.toLowerCase();
+  // 1. Presencia de divisas o símbolos monetarios
+  const hasCurrency = /([€$£]|eur(?:os?)?|usd|d[oó]lar(?:es)?|ars|pesos?|u\$s|us\$)/i.test(text);
+  // 2. Términos o verbos explícitos de finanzas
+  const hasFinancialTerms = /\b(gasto|gast[eé]|gastos|pago|pagu[eé]|pagos|compr[eé]|compras?|ingreso|ingresos|cobr[eé]|sueldo|salario|invert[ií]|inversi[oó]n|inversiones|acciones|cedears?|cripto|btc|fondo|alquiler|expensas|supermercado|almuerzo|cena|desayuno|nafta|combustible|uber|taxi)\b/i.test(lower);
+  // 3. Patrón común: concepto de 1 a 3 palabras seguido de un número (ej. "Taxi 15", "Pizza 20")
+  const hasSimpleExpensePattern = /^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]{2,25}\s+\d+(?:[.,]\d+)?(?:\s*[a-zA-Z$€]+)?$/i.test(text.trim());
+
+  return hasCurrency || hasFinancialTerms || hasSimpleExpensePattern;
 }
 
 /**
@@ -284,11 +377,12 @@ export async function startWhatsAppClient(): Promise<WASocket> {
       const text = extractTextMessage(msg.message);
       if (!text) continue;
 
-      // 3. Ignorar interacciones o menciones a Meta AI
+      // 3. Ignorar interacciones o menciones a Meta AI o bots
       const lowerText = text.toLowerCase();
       if (
         lowerText.includes('@meta') ||
         lowerText.includes('meta ai') ||
+        lowerText.includes('@ai') ||
         lowerText.startsWith('@')
       ) {
         continue;
@@ -303,14 +397,25 @@ export async function startWhatsAppClient(): Promise<WASocket> {
         continue;
       }
 
-      console.log(`\n📩 [Mensaje Personal Aceptado] id: ${msgId} | chat: ${msg.key.remoteJid} | texto: "${text}"`);
+      // 5. FILTRO CRUCIAL DE NÚMEROS / MONTOS:
+      // Si el mensaje no contiene ningún dígito numérico, es imposible que sea una transacción financiera.
+      // Se descartan en absoluto silencio preguntas a Meta AI, notas personales, saludos y textos conversacionales.
+      if (!/\d/.test(text)) {
+        continue;
+      }
 
+      console.log(`\n📩 [Mensaje Financiero Detectado] id: ${msgId} | chat: ${msg.key.remoteJid} | texto: "${text}"`);
 
       try {
-        // 4. Procesar mediante IA (Gemini Flash con Structured Output)
+        // 6. Procesar mediante IA (Gemini Flash con Structured Output)
         const extraction = await parseTransactionWithGemini(text);
 
         if (!extraction.esValido || !extraction.transaccion) {
+          // Si no es válido y tampoco parece un intento de registro financiero (ej. preguntas con números a Meta AI), descartar en silencio
+          if (!looksLikeFinancialAttempt(text)) {
+            continue;
+          }
+
           const mensajeError =
             extraction.mensajeAclaracion ||
             '⚠️ *No pude interpretar la transacción.*\n\n' +
@@ -320,22 +425,21 @@ export async function startWhatsAppClient(): Promise<WASocket> {
             '• _Supermercado 50 usd_\n' +
             '• _Nafta 15000 pesos ayer_';
 
-          let sent: any;
           try {
-            sent = await sock.sendMessage(msg.key.remoteJid!, { text: mensajeError }, { quoted: msg });
-          } catch {
-            sent = await sock.sendMessage(`${config.allowedPhoneNumber}@s.whatsapp.net`, { text: mensajeError });
+            const sent = await sock.sendMessage(msg.key.remoteJid!, { text: mensajeError }, { quoted: msg });
+            if (sent?.key?.id) rememberMessageId(sent.key.id);
+          } catch (sendErr) {
+            console.error('[WhatsApp] Fallo al enviar mensaje de aclaración:', sendErr);
           }
-          if (sent?.key?.id) rememberMessageId(sent.key.id);
           continue;
         }
 
         const tx = extraction.transaccion;
 
-        // 5. Escribir fila en Google Sheets
+        // 7. Escribir fila en Google Sheets
         await appendTransaction(tx);
 
-        // 6. Responder mensaje de confirmación formateado
+        // 8. Responder mensaje de confirmación formateado
         const formattedAmount = `${tx.monto.toFixed(2)} ${tx.moneda}`;
         const confirmationMessage =
           `✅ *Registrado con éxito:*\n` +
@@ -345,19 +449,22 @@ export async function startWhatsAppClient(): Promise<WASocket> {
           `• *Concepto:* ${tx.descripcion}\n` +
           `• *Fecha:* ${tx.fecha}`;
 
-        let sent: any;
         try {
-          sent = await sock.sendMessage(msg.key.remoteJid!, { text: confirmationMessage }, { quoted: msg });
-        } catch {
-          sent = await sock.sendMessage(`${config.allowedPhoneNumber}@s.whatsapp.net`, { text: confirmationMessage });
+          const sent = await sock.sendMessage(msg.key.remoteJid!, { text: confirmationMessage }, { quoted: msg });
+          if (sent?.key?.id) rememberMessageId(sent.key.id);
+          console.log(`[WhatsApp] ✅ Respuesta enviada con éxito.`);
+        } catch (sendErr) {
+          console.error('[WhatsApp] Fallo al enviar confirmación:', sendErr);
         }
-        if (sent?.key?.id) rememberMessageId(sent.key.id);
-        console.log(`[WhatsApp] ✅ Respuesta enviada con éxito.`);
       } catch (err: any) {
         console.error('[Error] Fallo al procesar el mensaje:', err);
-        const errorReply = `❌ Ocurrió un error al registrar el movimiento: ${err?.message || 'Error desconocido'}.\nPor favor intenta nuevamente.`;
-        const sent = await sock.sendMessage(msg.key.remoteJid!, { text: errorReply }, { quoted: msg });
-        if (sent?.key?.id) rememberMessageId(sent.key.id);
+        if (looksLikeFinancialAttempt(text)) {
+          const errorReply = `❌ Ocurrió un error al registrar el movimiento: ${err?.message || 'Error desconocido'}.\nPor favor intenta nuevamente.`;
+          try {
+            const sent = await sock.sendMessage(msg.key.remoteJid!, { text: errorReply }, { quoted: msg });
+            if (sent?.key?.id) rememberMessageId(sent.key.id);
+          } catch {}
+        }
       } finally {
         try {
           await sock.sendPresenceUpdate('unavailable');

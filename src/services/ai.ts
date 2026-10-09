@@ -193,12 +193,7 @@ export function parseTransactionFallback(text: string, defaultDate: string): Ext
   if (!amountMatch) {
     return {
       esValido: false,
-      mensajeAclaracion:
-        '⚠️ No encontré ningún monto numérico en tu mensaje.\n' +
-        'Por favor envía algo como:\n' +
-        '👉 *Almuerzo 12.50 euros*\n' +
-        '👉 *Supermercado 50 usd*\n' +
-        '👉 *Nafta 15000 pesos*',
+      mensajeAclaracion: '',
     };
   }
 
